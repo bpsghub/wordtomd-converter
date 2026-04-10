@@ -1,0 +1,23 @@
+[build-system]
+requires = ["setuptools>=42"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "wordtomd"
+version = "0.1.0"
+requires-python = ">=3.9"
+dependencies = [
+    "python-docx>=1.1.2",
+    "lxml>=5.2",
+]
+
+[project.optional-dependencies]
+images = ["Pillow>=10.0"]
+dev = ["pytest>=8.0", "pytest-cov"]
+
+[project.scripts]
+wordtomd = "wordtomd.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["wordtomd*"]
