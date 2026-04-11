@@ -7,18 +7,17 @@ import sys
 from pathlib import Path
 
 from wordtomd import __version__
-from wordtomd.converter import DocxConverter
 
 
 def main() -> None:
     parser = argparse.ArgumentParser(
         prog="wordtomd",
-        description="Convert .docx Word documents to Markdown (.md).",
+        description="Convert .docx or .pdf files to Markdown (.md).",
     )
     parser.add_argument(
         "input",
         type=Path,
-        help="Path to the input .docx file.",
+        help="Path to the input .docx or .pdf file.",
     )
     parser.add_argument(
         "output",
@@ -59,20 +58,46 @@ def main() -> None:
         print(f"Error: input file not found: {args.input}", file=sys.stderr)
         sys.exit(1)
 
-    if args.input.suffix.lower() != ".docx":
-        print(f"Error: input must be a .docx file, got: {args.input.suffix}", file=sys.stderr)
+    _SUPPORTED = {".docx", ".pdf"}
+    suffix = args.input.suffix.lower()
+
+    if suffix not in _SUPPORTED:
+        print(
+            f"Error: input must be a .docx or .pdf file, got: {args.input.suffix}",
+            file=sys.stderr,
+        )
         sys.exit(2)
 
     output = args.output or args.input.with_suffix(".md")
 
-    DocxConverter(
-        input_path=args.input,
-        output_path=output,
-        image_dir=args.image_dir,
-        extract_images=not args.no_images,
-        verbose=args.verbose,
-    ).convert()
+    if suffix == ".docx":
+        from wordtomd.converter import DocxConverter
+        converter = DocxConverter(
+            input_path=args.input,
+            output_path=output,
+            image_dir=args.image_dir,
+            extract_images=not args.no_images,
+            verbose=args.verbose,
+        )
+    else:  # .pdf
+        try:
+            from wordtomd.pdf_converter import PdfConverter
+        except ImportError:
+            print(
+                "Error: PDF conversion requires pymupdf. "
+                "Install with: pip install \"wordtomd[pdf]\"",
+                file=sys.stderr,
+            )
+            sys.exit(3)
+        converter = PdfConverter(
+            input_path=args.input,
+            output_path=output,
+            image_dir=args.image_dir,
+            extract_images=not args.no_images,
+            verbose=args.verbose,
+        )
 
+    converter.convert()
     print(f"Converted: {args.input} -> {output}")
 
 
