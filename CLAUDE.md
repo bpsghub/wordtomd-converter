@@ -1,4 +1,4 @@
-# wordtomd — Claude Code Context
+# mdmaker — Claude Code Context
 
 ## What this project is
 A Python CLI tool that converts Word documents (`.docx`) and PDF files (`.pdf`) to Markdown (`.md`), preserving headings, tables, lists, images, bold/italic, and hyperlinks. File type is detected automatically from the input extension.
@@ -13,15 +13,15 @@ Requires Python 3.9+. The `images` extra adds Pillow for EMF/WMF conversion. The
 
 ## Run
 ```bash
-wordtomd input.docx              # outputs input.md alongside the input file
-wordtomd input.docx output.md    # explicit output path
-wordtomd input.docx --no-images  # skip image extraction
-wordtomd input.docx -v           # verbose progress to stderr
+mdmaker input.docx              # outputs input.md alongside the input file
+mdmaker input.docx output.md    # explicit output path
+mdmaker input.docx --no-images  # skip image extraction
+mdmaker input.docx -v           # verbose progress to stderr
 
-wordtomd input.pdf               # PDF → Markdown (requires [pdf] extra)
-wordtomd input.pdf output.md     # explicit output path
-wordtomd input.pdf --no-images   # skip image extraction
-wordtomd input.pdf -v            # verbose progress to stderr
+mdmaker input.pdf               # PDF → Markdown (requires [pdf] extra)
+mdmaker input.pdf output.md     # explicit output path
+mdmaker input.pdf --no-images   # skip image extraction
+mdmaker input.pdf -v            # verbose progress to stderr
 ```
 
 Exit codes: `1` = file not found, `2` = unsupported extension, `3` = missing optional dependency (`pymupdf` not installed).

@@ -11,7 +11,7 @@ from wordtomd import __version__
 
 def main() -> None:
     parser = argparse.ArgumentParser(
-        prog="wordtomd",
+        prog="mdmaker",
         description="Convert .docx or .pdf files to Markdown (.md).",
     )
     parser.add_argument(
@@ -85,7 +85,7 @@ def main() -> None:
         except ImportError:
             print(
                 "Error: PDF conversion requires pymupdf. "
-                "Install with: pip install \"wordtomd[pdf]\"",
+                "Install with: pip install \"wordtomd[pdf]\" then re-run mdmaker",
                 file=sys.stderr,
             )
             sys.exit(3)

@@ -1,4 +1,4 @@
-# wordtomd
+# mdmaker
 
 A Python CLI tool that converts Word documents (`.docx`) and PDF files (`.pdf`) to GitHub-flavoured Markdown (`.md`).
 
@@ -48,36 +48,36 @@ Requires **Python 3.9+**.
 
 ```bash
 # DOCX → Markdown (output written alongside the input file)
-wordtomd input.docx
+mdmaker input.docx
 
 # PDF → Markdown
-wordtomd input.pdf
+mdmaker input.pdf
 
 # Explicit output path
-wordtomd input.docx output.md
-wordtomd input.pdf output.md
+mdmaker input.docx output.md
+mdmaker input.pdf output.md
 
 # Custom image subdirectory name
-wordtomd input.docx --image-dir assets
-wordtomd input.pdf --image-dir assets
+mdmaker input.docx --image-dir assets
+mdmaker input.pdf --image-dir assets
 
 # Skip image extraction
-wordtomd input.docx --no-images
-wordtomd input.pdf --no-images
+mdmaker input.docx --no-images
+mdmaker input.pdf --no-images
 
 # Verbose progress to stderr
-wordtomd input.docx -v
-wordtomd input.pdf -v
+mdmaker input.docx -v
+mdmaker input.pdf -v
 
 # Show version
-wordtomd --version
+mdmaker --version
 ```
 
 **Exit codes:** `1` = file not found, `2` = unsupported extension, `3` = required optional dependency not installed.
 
 ## Output example
 
-Given a document with a table and a list, `wordtomd` produces:
+Given a document with a table and a list, `mdmaker` produces:
 
 ```markdown
 # My Document
