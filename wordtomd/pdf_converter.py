@@ -34,7 +34,7 @@ _HEADING_SIZE_RATIOS: List[Tuple[float, str]] = [
     (2.0, "# "),
     (1.6, "## "),
     (1.3, "### "),
-    (1.1, "#### "),
+    (1.2, "#### "),
 ]
 
 # ---------------------------------------------------------------------------
@@ -44,14 +44,20 @@ _LEFT_MARGIN_PT = 50.0   # typical PDF left margin in points
 _INDENT_STEP_PT = 18.0   # ~one tab stop
 
 # ---------------------------------------------------------------------------
+# Vector drawing capture
+# ---------------------------------------------------------------------------
+_MIN_DRAWING_AREA_PT2 = 400.0   # ignore paths smaller than ~20×20pt
+_DRAWING_MERGE_PAD_PT = 8.0     # expand each path rect before merging clusters
+
+# ---------------------------------------------------------------------------
 # Markdown metacharacter escaping
 # ---------------------------------------------------------------------------
-_MD_ESCAPE_RE = re.compile(r"([\\\`\*\_\{\}\[\]\(\)#\+\-\.!|])")
+_MD_ESCAPE_RE = re.compile(r"([\\\`\*\_\[\]\(\)|])")
 
 # ---------------------------------------------------------------------------
 # Ordered list pattern: "1.", "2)", "(3)", "a.", "b)" …
 # ---------------------------------------------------------------------------
-_ORDERED_RE = re.compile(r"^\(?[0-9]+[\.\)]\s|^[a-zA-Z][\.\)]\s")
+_ORDERED_RE = re.compile(r"^\(?[0-9]+[\.\)]\s|^[a-z][\.\)]\s")
 
 
 def _escape_md(text: str) -> str:
@@ -211,8 +217,86 @@ class PdfConverter:
                     bbox=tb,
                 ))
 
+            # Capture vector drawings (pie charts, grids, diagrams, etc.)
+            if self.extract_images:
+                for drawing_block in self._collect_drawing_blocks(
+                    page, page_num, table_bboxes
+                ):
+                    all_blocks.append(drawing_block)
+
         all_blocks.sort(key=lambda b: (b.page_num, b.y0))
         return all_blocks
+
+    def _collect_drawing_blocks(
+        self,
+        page: fitz.Page,
+        page_num: int,
+        table_bboxes: List[Tuple[float, float, float, float]],
+    ) -> List["_Block"]:
+        """Cluster vector drawing paths into diagram bounding boxes.
+
+        PDF educational diagrams (pie charts, grids, bar charts) are drawn with
+        vector path operations, not embedded as raster images.  We detect them
+        by grouping nearby drawing paths and returning one _Block per cluster.
+        """
+        try:
+            drawings = page.get_drawings()
+        except Exception:
+            return []
+
+        if not drawings:
+            return []
+
+        # Collect individual path rects, filtering degenerate ones
+        rects: List[List[float]] = []  # [x0, y0, x1, y1]
+        for d in drawings:
+            r = d.get("rect")
+            if r is None:
+                continue
+            x0, y0, x1, y1 = float(r.x0), float(r.y0), float(r.x1), float(r.y1)
+            if (x1 - x0) * (y1 - y0) < 1.0:
+                continue
+            rects.append([x0, y0, x1, y1])
+
+        if not rects:
+            return []
+
+        # Merge overlapping / nearby rects into clusters
+        pad = _DRAWING_MERGE_PAD_PT
+        merged: List[List[float]] = []
+        for r in rects:
+            placed = False
+            for m in merged:
+                # Check if padded rects overlap
+                if (r[0] - pad < m[2] + pad and r[2] + pad > m[0] - pad and
+                        r[1] - pad < m[3] + pad and r[3] + pad > m[1] - pad):
+                    m[0] = min(m[0], r[0])
+                    m[1] = min(m[1], r[1])
+                    m[2] = max(m[2], r[2])
+                    m[3] = max(m[3], r[3])
+                    placed = True
+                    break
+            if not placed:
+                merged.append(list(r))
+
+        blocks: List[_Block] = []
+        for m in merged:
+            x0, y0, x1, y1 = m
+            area = (x1 - x0) * (y1 - y0)
+            if area < _MIN_DRAWING_AREA_PT2:
+                continue
+            bbox = (x0, y0, x1, y1)
+            if self._overlaps_any_table(bbox, table_bboxes):
+                continue
+            blocks.append(_Block(
+                page_num=page_num,
+                y0=y0,
+                x0=x0,
+                block_type="drawing",
+                bbox=bbox,
+            ))
+
+        return blocks
 
     def _get_table_bboxes(
         self, page: fitz.Page
@@ -321,6 +405,9 @@ class PdfConverter:
             if block.block_type == "image":
                 emit("image", self._render_image_block(block, doc))
 
+            elif block.block_type == "drawing":
+                emit("image", self._render_drawing_block(block, doc))
+
             elif block.block_type == "table":
                 if block.page_num not in table_cache:
                     try:
@@ -367,6 +454,12 @@ class PdfConverter:
     def _size_to_heading(self, size: float, body_size: float) -> str:
         if body_size <= 0:
             return ""
+        # Require a minimum absolute size to avoid false positives from small
+        # body fonts where even modest size differences exceed the ratio threshold.
+        # Also guard against question-label fonts that are only slightly larger
+        # than body text (e.g. 13pt labels in an 11pt document).
+        if size < body_size + 4.0:
+            return ""
         ratio = size / body_size
         for min_ratio, prefix in _HEADING_SIZE_RATIOS:
             if ratio >= min_ratio:
@@ -385,19 +478,64 @@ class PdfConverter:
     def _render_list_item(self, block: _Block, inline: str) -> str:
         indent_level = max(0, int((block.x0 - _LEFT_MARGIN_PT) / _INDENT_STEP_PT))
         indent = "  " * indent_level
-        text = inline.strip()
 
-        # Strip leading bullet character
-        if text and text[0] in _BULLET_CHARS:
-            text = text[1:].lstrip()
-            return f"{indent}- {text}"
+        raw_first = block.spans[0].text.lstrip() if block.spans else ""
 
-        # Strip ordered marker and preserve order (emit as "1." for simplicity)
-        cleaned = _ORDERED_RE.sub("", text)
-        if cleaned != text:
-            return f"{indent}1. {cleaned.lstrip()}"
+        # --- Bullet item ---
+        if raw_first and raw_first[0] in _BULLET_CHARS:
+            # Re-render spans with the bullet char stripped from the first span,
+            # so bold/italic wrapping around the bullet doesn't leak into content.
+            rest_inline = self._render_spans_after_prefix(block.spans, 1)
+            return f"{indent}- {rest_inline.strip()}"
 
-        return f"{indent}- {text}"
+        # --- Ordered item ---
+        m = _ORDERED_RE.match(raw_first)
+        if m:
+            marker = m.group(0).strip()   # e.g. "1.", "2)", "(3)", "a."
+            # Re-render spans with the marker text stripped from the first span
+            # to avoid duplication when the number is bold-wrapped.
+            rest_inline = self._render_spans_after_prefix(
+                block.spans, len(m.group(0))
+            )
+            return f"{indent}{marker} {rest_inline.strip()}"
+
+        return f"{indent}- {inline.strip()}"
+
+    def _render_spans_after_prefix(
+        self, spans: List[_Span], prefix_chars: int
+    ) -> str:
+        """Re-render spans, skipping the first `prefix_chars` raw characters.
+
+        This lets us strip a list marker (bullet char or ordered prefix) from
+        the raw text before applying bold/italic formatting, which avoids
+        duplicating the marker when it happens to be wrapped in bold.
+        """
+        if not spans:
+            return ""
+
+        remaining: List[_Span] = []
+        chars_left = prefix_chars
+        for i, span in enumerate(spans):
+            raw = span.text
+            if chars_left > 0:
+                skip = min(chars_left, len(raw))
+                chars_left -= skip
+                tail = raw[skip:].lstrip() if chars_left == 0 else raw[skip:]
+                if tail:
+                    # Create a trimmed copy of the span
+                    trimmed = _Span(
+                        text=tail,
+                        size=span.size,
+                        flags=span.flags,
+                        origin_x=span.origin_x,
+                        origin_y=span.origin_y,
+                        url=span.url,
+                    )
+                    remaining.append(trimmed)
+            else:
+                remaining.append(span)
+
+        return self._render_inline_spans(remaining)
 
     def _render_inline_spans(self, spans: List[_Span]) -> str:
         parts = []
@@ -520,6 +658,38 @@ class PdfConverter:
         except Exception as exc:
             self._log(f"Warning: could not extract image xref={xref}: {exc}")
             return [f"<!-- image xref={xref} extraction failed -->"]
+
+    # ------------------------------------------------------------------
+    # Drawing block rendering (vector diagrams)
+    # ------------------------------------------------------------------
+
+    def _render_drawing_block(self, block: _Block, doc: fitz.Document) -> List[str]:
+        """Rasterize a vector-drawing cluster and save it as a PNG."""
+        self._image_counter += 1
+        label = f"drawing-{self._image_counter}"
+
+        if not self.extract_images:
+            return [f"![{label}]()"]
+
+        try:
+            page = doc[block.page_num]
+            clip = fitz.Rect(block.bbox)
+            pix = page.get_pixmap(clip=clip, dpi=150)
+
+            if not self._images_dir_created:
+                self.images_dir.mkdir(parents=True, exist_ok=True)
+                self._images_dir_created = True
+
+            filename = f"{label}.png"
+            out_path = self.images_dir / filename
+            pix.save(str(out_path))
+            pix = None  # release
+
+            rel_path = f"{self.images_dir.name}/{filename}"
+            return [f"![{label}]({rel_path})"]
+        except Exception as exc:
+            self._log(f"Warning: could not render drawing block: {exc}")
+            return []
 
     # ------------------------------------------------------------------
     # Helpers
